@@ -16,6 +16,38 @@ provider "aws" {
 }
 
 # =========================
+# KMS KEY (CloudTrail + EBS)
+# =========================
+resource "aws_kms_key" "agricam_kms" {
+  description             = "Cle KMS AgriCam pour chiffrement EBS et CloudTrail"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true
+
+  tags = {
+    Projet        = "AgriCam"
+    Environnement = var.environnement
+  }
+}
+
+resource "aws_kms_alias" "agricam_kms_alias" {
+  name          = "alias/agricam-${var.environnement}"
+  target_key_id = aws_kms_key.agricam_kms.key_id
+}
+
+# =========================
+# SNS TOPIC (CloudTrail)
+# =========================
+resource "aws_sns_topic" "cloudtrail_alerts" {
+  name              = "agricam-cloudtrail-alerts-${var.environnement}"
+  kms_master_key_id = aws_kms_key.agricam_kms.id
+
+  tags = {
+    Projet        = "AgriCam"
+    Environnement = var.environnement
+  }
+}
+
+# =========================
 # VPC
 # =========================
 resource "aws_vpc" "agricam_vpc" {
@@ -32,13 +64,13 @@ resource "aws_vpc" "agricam_vpc" {
 }
 
 # =========================
-# SUBNET
+# SUBNET — Pas d'IP publique automatique (CKV_AWS_130)
 # =========================
 resource "aws_subnet" "agricam_subnet" {
   vpc_id                  = aws_vpc.agricam_vpc.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false  # FIX CKV_AWS_130
 
   tags = {
     Name = "agricam-subnet-${var.environnement}"
@@ -82,45 +114,48 @@ resource "aws_route_table_association" "agricam_rta" {
 
 # =========================
 # SECURITY GROUP
+# FIX CKV_AWS_260 : plus de port 80 ouvert à 0.0.0.0/0
+# FIX CKV_AWS_382 : egress restreint
+# FIX CKV_AWS_23  : description sur chaque règle
 # =========================
 resource "aws_security_group" "agricam_sg" {
   name        = "agricam-sg-${var.environnement}"
-  description = "Groupe de securite AgriCam"
+  description = "Groupe de securite AgriCam — acces HTTPS et SSH admin uniquement"
   vpc_id      = aws_vpc.agricam_vpc.id
 
-  # HTTP
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP"
-  }
-
-  # HTTPS
+  # HTTPS uniquement (plus de port 80 public — FIX CKV_AWS_260)
   ingress {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS"
+    description = "HTTPS entrant depuis internet"
   }
 
-  # SSH
+  # SSH — IP admin uniquement
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = [var.ip_admin]
-    description = "SSH Admin"
+    description = "SSH Admin uniquement"
   }
 
-  # SORTANT
+  # SORTANT — restreint HTTPS + HTTP seulement (FIX CKV_AWS_382)
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS sortant vers internet"
+  }
+
+  egress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP sortant pour mises a jour apt"
   }
 
   tags = {
@@ -138,6 +173,10 @@ resource "aws_key_pair" "agricam_keypair" {
 
 # =========================
 # INSTANCE EC2
+# FIX CKV_AWS_79  : IMDSv2 obligatoire
+# FIX CKV_AWS_8   : EBS chiffré avec KMS
+# FIX CKV_AWS_126 : monitoring détaillé activé
+# FIX CKV_AWS_135 : EBS optimisé activé
 # =========================
 resource "aws_instance" "agricam_serveur" {
   ami                    = var.ami_id
@@ -145,6 +184,23 @@ resource "aws_instance" "agricam_serveur" {
   subnet_id              = aws_subnet.agricam_subnet.id
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
+  ebs_optimized          = true   # FIX CKV_AWS_135
+  monitoring             = true   # FIX CKV_AWS_126
+
+  # FIX CKV_AWS_79 : IMDSv2 uniquement (désactive IMDSv1)
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"   # Force IMDSv2
+    http_put_response_hop_limit = 1
+  }
+
+  # FIX CKV_AWS_8 : EBS racine chiffré avec KMS
+  root_block_device {
+    encrypted   = true
+    kms_key_id  = aws_kms_key.agricam_kms.arn
+    volume_type = "gp3"
+    volume_size = 20
+  }
 
   user_data = <<-EOF
 #!/bin/bash
@@ -182,9 +238,6 @@ resource "aws_s3_bucket" "agricam_stockage" {
   }
 }
 
-# =========================
-# BLOCAGE ACCES PUBLIC S3
-# =========================
 resource "aws_s3_bucket_public_access_block" "agricam_s3_pab" {
   bucket = aws_s3_bucket.agricam_stockage.id
 
@@ -194,22 +247,17 @@ resource "aws_s3_bucket_public_access_block" "agricam_s3_pab" {
   restrict_public_buckets = true
 }
 
-# =========================
-# CHIFFREMENT S3
-# =========================
 resource "aws_s3_bucket_server_side_encryption_configuration" "agricam_chiffrement" {
   bucket = aws_s3_bucket.agricam_stockage.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.agricam_kms.arn
     }
   }
 }
 
-# =========================
-# VERSIONING S3
-# =========================
 resource "aws_s3_bucket_versioning" "agricam_versioning" {
   bucket = aws_s3_bucket.agricam_stockage.id
 
@@ -230,6 +278,34 @@ resource "aws_s3_bucket" "logs_cloudtrail" {
   }
 }
 
+resource "aws_s3_bucket_public_access_block" "cloudtrail_pab" {
+  bucket = aws_s3_bucket.logs_cloudtrail.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail_chiffrement" {
+  bucket = aws_s3_bucket.logs_cloudtrail.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.agricam_kms.arn
+    }
+  }
+}
+
+resource "aws_s3_bucket_versioning" "cloudtrail_versioning" {
+  bucket = aws_s3_bucket.logs_cloudtrail.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 # =========================
 # POLICY CLOUDTRAIL
 # =========================
@@ -243,27 +319,20 @@ resource "aws_s3_bucket_policy" "cloudtrail_policy" {
       {
         Sid    = "AWSCloudTrailAclCheck"
         Effect = "Allow"
-
         Principal = {
           Service = "cloudtrail.amazonaws.com"
         }
-
         Action   = "s3:GetBucketAcl"
         Resource = aws_s3_bucket.logs_cloudtrail.arn
       },
-
       {
         Sid    = "AWSCloudTrailWrite"
         Effect = "Allow"
-
         Principal = {
           Service = "cloudtrail.amazonaws.com"
         }
-
-        Action = "s3:PutObject"
-
+        Action   = "s3:PutObject"
         Resource = "${aws_s3_bucket.logs_cloudtrail.arn}/AWSLogs/*"
-
         Condition = {
           StringEquals = {
             "s3:x-amz-acl" = "bucket-owner-full-control"
@@ -276,6 +345,8 @@ resource "aws_s3_bucket_policy" "cloudtrail_policy" {
 
 # =========================
 # CLOUDTRAIL
+# FIX CKV_AWS_252 : SNS Topic ajouté
+# FIX CKV_AWS_35  : chiffrement KMS ajouté
 # =========================
 resource "aws_cloudtrail" "agricam_audit" {
   name                          = "agricam-trail-${var.environnement}"
@@ -283,6 +354,8 @@ resource "aws_cloudtrail" "agricam_audit" {
   is_multi_region_trail         = true
   enable_log_file_validation    = true
   include_global_service_events = true
+  kms_key_id                    = aws_kms_key.agricam_kms.arn  # FIX CKV_AWS_35
+  sns_topic_name                = aws_sns_topic.cloudtrail_alerts.arn # FIX CKV_AWS_252
 
   depends_on = [
     aws_s3_bucket_policy.cloudtrail_policy
