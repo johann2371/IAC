@@ -14,12 +14,12 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: eu-west-3
 
-      # Terraform variables
+      # Terraform variables obligatoires
       TF_VAR_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_environnement: dev
       TF_VAR_ip_admin: ${{ secrets.IP_ADMIN }}
 
-      #  FIX IMPORTANT FREE TIER EC2
+      # 🔥 FIX FREE TIER EC2
       TF_VAR_type_instance: t2.micro
 
     defaults:
@@ -41,6 +41,10 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+      # 🔍 DEBUG IMPORTANT
+      - name: Debug instance type
+        run: echo "INSTANCE_TYPE=$TF_VAR_type_instance"
 
       - name: Terraform Plan
         run: terraform plan
