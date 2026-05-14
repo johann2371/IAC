@@ -1,4 +1,5 @@
 variable "aws_region" {
+  type    = string
   default = "eu-west-3"
 }
 
@@ -7,7 +8,8 @@ variable "environnement" {
 }
 
 variable "type_instance" {
-  default = "t3.micro"
+  type    = string
+  default = "t2.micro"
 }
 
 variable "ip_admin" {
@@ -15,5 +17,6 @@ variable "ip_admin" {
 }
 
 variable "public_key" {
-  type = string
+  type      = string
+  sensitive = true
 }
