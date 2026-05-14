@@ -1,20 +1,248 @@
-name: Scan Terraform Security
+name: AgriCam — Pipeline Terraform CI/CD
 
 on:
   push:
     branches:
       - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  TF_VERSION: "1.7.0"
+  TF_WORKING_DIR: "environnements/dev"
+  AWS_REGION: "us-east-1"
 
 jobs:
-  checkov:
+
+  # =========================================================
+  # ÉTAPE 1 — FORMATAGE & VALIDATION
+  # =========================================================
+  lint-et-validation:
+    name: "1 · Lint & Validation"
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Vérification du formatage (terraform fmt)
+        id: fmt
+        run: terraform fmt -check -recursive
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: false
+
+      - name: Initialisation Terraform
+        id: init
+        run: terraform init -backend=false
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Validation de la syntaxe (terraform validate)
+        id: validate
+        run: terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+  # =========================================================
+  # ÉTAPE 2 — SCAN DE SÉCURITÉ CHECKOV
+  # =========================================================
+  securite-checkov:
+    name: "2 · Sécurité — Checkov"
+    runs-on: ubuntu-latest
+    needs: lint-et-validation
+
+    steps:
+      - name: Checkout du code
         uses: actions/checkout@v4
 
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@master
         with:
-          directory: .
+          directory: ${{ env.TF_WORKING_DIR }}
           framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+          soft_fail: false
+
+      - name: Upload résultats Checkov (SARIF)
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+  # =========================================================
+  # ÉTAPE 3 — SCAN DE SÉCURITÉ TFSEC
+  # =========================================================
+  securite-tfsec:
+    name: "3 · Sécurité — tfsec"
+    runs-on: ubuntu-latest
+    needs: lint-et-validation
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          format: lovely
+          soft_fail: false
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================
+  # ÉTAPE 4 — SCAN TRIVY (vulnérabilités supplémentaires)
+  # =========================================================
+  securite-trivy:
+    name: "4 · Sécurité — Trivy"
+    runs-on: ubuntu-latest
+    needs: lint-et-validation
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy IaC scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: ${{ env.TF_WORKING_DIR }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload résultats Trivy (SARIF)
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+
+  # =========================================================
+  # ÉTAPE 6 — TERRAFORM PLAN
+  # =========================================================
+  terraform-plan:
+    name: "6 · Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: [securite-checkov, securite-tfsec, securite-trivy]
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configuration AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var="ip_admin=${{ secrets.IP_ADMIN }}" \
+            -out=tfplan \
+            -no-color 2>&1 | tee plan_output.txt
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: false
+
+      - name: Sauvegarde du plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/plan_output.txt
+          retention-days: 7
+
+      - name: Commentaire PR avec résumé du plan
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('${{ env.TF_WORKING_DIR }}/plan_output.txt', 'utf8');
+            const maxLen = 65000;
+            const truncated = plan.length > maxLen ? plan.substring(0, maxLen) + '\n... (tronqué)' : plan;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📋 Terraform Plan — AgriCam Dev\n\`\`\`hcl\n${truncated}\n\`\`\``
+            });
+
+  # =========================================================
+  # ÉTAPE 7 — TERRAFORM APPLY (main uniquement)
+  # =========================================================
+  terraform-apply:
+    name: "7 · Terraform Apply"
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    environment:
+      name: production
+      url: https://console.aws.amazon.com
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configuration AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Téléchargement du plan sauvegardé
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Notification succès Slack (optionnel)
+        if: success()
+        run: |
+          echo "✅ Deploy AgriCam DEV réussi — commit ${{ github.sha }}"
+          # Décommente si tu as un webhook Slack :
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"✅ AgriCam DEV deployé avec succès"}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}
