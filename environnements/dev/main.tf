@@ -1,4 +1,6 @@
 terraform {
+  required_version = ">= 1.5.0"
+
   required_providers {
 
     aws = {
@@ -111,7 +113,6 @@ resource "aws_security_group" "agricam_sg" {
 
   ingress {
     description = "SSH"
-
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -120,7 +121,6 @@ resource "aws_security_group" "agricam_sg" {
 
   ingress {
     description = "HTTP"
-
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -128,7 +128,6 @@ resource "aws_security_group" "agricam_sg" {
   }
 
   egress {
-
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -140,7 +139,6 @@ resource "aws_security_group" "agricam_sg" {
 # KEY PAIR
 # =========================
 resource "aws_key_pair" "agricam_keypair" {
-
   key_name   = "agricam-${var.environnement}-${random_id.suffix.hex}"
   public_key = var.public_key
 }
@@ -175,7 +173,6 @@ resource "aws_instance" "agricam_serveur" {
 # S3 STORAGE
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
-
   bucket = "agricam-${var.environnement}-storage-${random_id.suffix.hex}"
 }
 
@@ -183,6 +180,5 @@ resource "aws_s3_bucket" "agricam_stockage" {
 # S3 CLOUDTRAIL LOGS
 # =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
-
   bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"
 }
