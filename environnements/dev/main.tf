@@ -2,7 +2,6 @@ terraform {
   required_version = ">= 1.5.0"
 
   required_providers {
-
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
@@ -20,7 +19,7 @@ provider "aws" {
 }
 
 # =========================
-# RANDOM SUFFIX (ANTI-CONFLITS AWS)
+# RANDOM SUFFIX
 # =========================
 resource "random_id" "suffix" {
   byte_length = 4
@@ -67,13 +66,19 @@ resource "aws_vpc" "agricam_vpc" {
   }
 }
 
+# Default security group locked (Checkov fix)
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.agricam_vpc.id
+}
+
 # =========================
-# SUBNET
+# SUBNET (PRIVATE MODE FIX)
 # =========================
 resource "aws_subnet" "agricam_subnet" {
-  vpc_id                  = aws_vpc.agricam_vpc.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
+  vpc_id     = aws_vpc.agricam_vpc.id
+  cidr_block = "10.0.1.0/24"
+
+  map_public_ip_on_launch = false
 
   tags = {
     Name = "agricam-subnet"
@@ -105,11 +110,12 @@ resource "aws_route_table_association" "agricam_rta" {
 }
 
 # =========================
-# SECURITY GROUP
+# SECURITY GROUP (CLEAN)
 # =========================
 resource "aws_security_group" "agricam_sg" {
-  name   = "agricam-sg-${random_id.suffix.hex}"
-  vpc_id = aws_vpc.agricam_vpc.id
+  name        = "agricam-sg-${random_id.suffix.hex}"
+  description = "Security group for AgriCam"
+  vpc_id      = aws_vpc.agricam_vpc.id
 
   ingress {
     description = "SSH"
@@ -120,18 +126,19 @@ resource "aws_security_group" "agricam_sg" {
   }
 
   ingress {
-    description = "HTTP"
+    description = "HTTP restricted"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.ip_admin]
   }
 
   egress {
+    description = "Outbound limited"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 }
 
@@ -144,25 +151,36 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# EC2 INSTANCE
+# EC2 INSTANCE (SECURE)
 # =========================
 resource "aws_instance" "agricam_serveur" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = var.type_instance
 
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.type_instance
   subnet_id              = aws_subnet.agricam_subnet.id
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
 
-  associate_public_ip_address = true
+  associate_public_ip_address = false
+
+  monitoring     = true
+  ebs_optimized   = true
+
+  metadata_options {
+    http_tokens = "required"
+  }
+
+  root_block_device {
+    encrypted = true
+  }
 
   user_data = <<-EOF
-              #!/bin/bash
-              apt update -y
-              apt install -y nginx
-              systemctl enable nginx
-              systemctl start nginx
-              EOF
+#!/bin/bash
+apt update -y
+apt install -y nginx
+systemctl enable nginx
+systemctl start nginx
+EOF
 
   tags = {
     Name = "agricam-server"
@@ -170,15 +188,69 @@ resource "aws_instance" "agricam_serveur" {
 }
 
 # =========================
-# S3 STORAGE
+# S3 STORAGE (SECURE)
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
   bucket = "agricam-${var.environnement}-storage-${random_id.suffix.hex}"
 }
 
+resource "aws_s3_bucket_versioning" "storage_versioning" {
+  bucket = aws_s3_bucket.agricam_stockage.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "storage_encryption" {
+  bucket = aws_s3_bucket.agricam_stockage.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "storage_pab" {
+  bucket = aws_s3_bucket.agricam_stockage.id
+
+  block_public_acls      = true
+  block_public_policy    = true
+  ignore_public_acls     = true
+  restrict_public_buckets = true
+}
+
 # =========================
-# S3 CLOUDTRAIL LOGS
+# S3 LOGS
 # =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
   bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"
+}
+
+resource "aws_s3_bucket_versioning" "logs_versioning" {
+  bucket = aws_s3_bucket.logs_cloudtrail.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "logs_pab" {
+  bucket = aws_s3_bucket.logs_cloudtrail.id
+
+  block_public_acls      = true
+  block_public_policy    = true
+  ignore_public_acls     = true
+  restrict_public_buckets = true
+}
+
+# =========================
+# FLOW LOGS VPC
+# =========================
+resource "aws_flow_log" "agricam_flow" {
+  vpc_id               = aws_vpc.agricam_vpc.id
+  traffic_type         = "ALL"
+  log_destination_type  = "s3"
+  log_destination       = aws_s3_bucket.logs_cloudtrail.arn
 }
