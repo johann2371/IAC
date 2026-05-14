@@ -26,4 +26,9 @@ variable "ip_admin" {
   description = "IP de l'admin autorise au SSH (format x.x.x.x/32)"
   type        = string
 }
+variable "public_key" {
+  description = "Clé publique SSH pour EC2"
+  type        = string
+  sensitive   = true
+}
 
