@@ -10,10 +10,6 @@ variable "type_instance" {
   default = "t2.micro"
 }
 
-variable "ami_id" {
-  type = string
-}
-
 variable "ip_admin" {
   type = string
 }

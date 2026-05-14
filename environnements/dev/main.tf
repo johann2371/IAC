@@ -12,6 +12,20 @@ provider "aws" {
 }
 
 # =========================
+# AMI DYNAMIQUE (FIX CI/CD)
+# =========================
+data "aws_ami" "ubuntu" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*"]
+  }
+
+  owners = ["099720109477"]
+}
+
+# =========================
 # KMS
 # =========================
 resource "aws_kms_key" "agricam_kms" {
@@ -101,10 +115,10 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# EC2
+# EC2 (FIX AMI)
 # =========================
 resource "aws_instance" "agricam_serveur" {
-  ami                    = var.ami_id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.type_instance
   subnet_id              = aws_subnet.agricam_subnet.id
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
@@ -120,14 +134,14 @@ EOF
 }
 
 # =========================
-# S3
+# S3 STORAGE
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
   bucket = "agricam-${var.environnement}-storage-2026"
 }
 
 # =========================
-# CLOUDTRAIL LOG BUCKET
+# CLOUDTRAIL LOGS BUCKET
 # =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
   bucket = "agricam-${var.environnement}-logs-2026"
