@@ -44,3 +44,4 @@ jobs:
 
       - name: Terraform Apply
         run: terraform apply -auto-approve
+        //cette étape est à utiliser avec précaution, surtout dans un contexte de CI/CD. Il est souvent préférable de ne pas appliquer automatiquement les changements sans une revue préalable.
