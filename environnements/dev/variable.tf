@@ -7,7 +7,7 @@ variable "environnement" {
 }
 
 variable "type_instance" {
-  default = "t2.micro"
+  default = "t3.micro"
 }
 
 variable "ip_admin" {
