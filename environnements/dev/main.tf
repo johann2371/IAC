@@ -70,7 +70,7 @@ resource "aws_subnet" "agricam_subnet" {
   vpc_id                  = aws_vpc.agricam_vpc.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = false  # FIX CKV_AWS_130
+  map_public_ip_on_launch = false # FIX CKV_AWS_130
 
   tags = {
     Name = "agricam-subnet-${var.environnement}"
@@ -184,13 +184,13 @@ resource "aws_instance" "agricam_serveur" {
   subnet_id              = aws_subnet.agricam_subnet.id
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
-  ebs_optimized          = true   # FIX CKV_AWS_135
-  monitoring             = true   # FIX CKV_AWS_126
+  ebs_optimized          = true # FIX CKV_AWS_135
+  monitoring             = true # FIX CKV_AWS_126
 
   # FIX CKV_AWS_79 : IMDSv2 uniquement (désactive IMDSv1)
   metadata_options {
     http_endpoint               = "enabled"
-    http_tokens                 = "required"   # Force IMDSv2
+    http_tokens                 = "required" # Force IMDSv2
     http_put_response_hop_limit = 1
   }
 
@@ -354,7 +354,7 @@ resource "aws_cloudtrail" "agricam_audit" {
   is_multi_region_trail         = true
   enable_log_file_validation    = true
   include_global_service_events = true
-  kms_key_id                    = aws_kms_key.agricam_kms.arn  # FIX CKV_AWS_35
+  kms_key_id                    = aws_kms_key.agricam_kms.arn         # FIX CKV_AWS_35
   sns_topic_name                = aws_sns_topic.cloudtrail_alerts.arn # FIX CKV_AWS_252
 
   depends_on = [
