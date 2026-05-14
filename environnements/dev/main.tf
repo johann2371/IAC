@@ -1,8 +1,14 @@
 terraform {
   required_providers {
+
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
+    }
+
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
     }
   }
 }
@@ -12,14 +18,21 @@ provider "aws" {
 }
 
 # =========================
-# AMI Ubuntu
+# RANDOM SUFFIX (ANTI-CONFLITS AWS)
+# =========================
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
+# =========================
+# AMI UBUNTU
 # =========================
 data "aws_ami" "ubuntu" {
   most_recent = true
 
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*"]
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
   }
 
   owners = ["099720109477"]
@@ -35,7 +48,7 @@ resource "aws_kms_key" "agricam_kms" {
 }
 
 resource "aws_kms_alias" "agricam_kms_alias" {
-  name          = "alias/agricam-${var.environnement}"
+  name          = "alias/agricam-${var.environnement}-${random_id.suffix.hex}"
   target_key_id = aws_kms_key.agricam_kms.key_id
 }
 
@@ -46,6 +59,10 @@ resource "aws_vpc" "agricam_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
+
+  tags = {
+    Name = "agricam-vpc"
+  }
 }
 
 # =========================
@@ -55,6 +72,10 @@ resource "aws_subnet" "agricam_subnet" {
   vpc_id                  = aws_vpc.agricam_vpc.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
+
+  tags = {
+    Name = "agricam-subnet"
+  }
 }
 
 # =========================
@@ -85,9 +106,12 @@ resource "aws_route_table_association" "agricam_rta" {
 # SECURITY GROUP
 # =========================
 resource "aws_security_group" "agricam_sg" {
+  name   = "agricam-sg-${random_id.suffix.hex}"
   vpc_id = aws_vpc.agricam_vpc.id
 
   ingress {
+    description = "SSH"
+
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -95,6 +119,8 @@ resource "aws_security_group" "agricam_sg" {
   }
 
   ingress {
+    description = "HTTP"
+
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -102,6 +128,7 @@ resource "aws_security_group" "agricam_sg" {
   }
 
   egress {
+
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -113,7 +140,8 @@ resource "aws_security_group" "agricam_sg" {
 # KEY PAIR
 # =========================
 resource "aws_key_pair" "agricam_keypair" {
-  key_name   = "agricam-${var.environnement}"
+
+  key_name   = "agricam-${var.environnement}-${random_id.suffix.hex}"
   public_key = var.public_key
 }
 
@@ -121,28 +149,40 @@ resource "aws_key_pair" "agricam_keypair" {
 # EC2 INSTANCE
 # =========================
 resource "aws_instance" "agricam_serveur" {
+
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.type_instance
   subnet_id              = aws_subnet.agricam_subnet.id
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
 
+  associate_public_ip_address = true
+
   user_data = <<-EOF
-#!/bin/bash
-apt update -y
-apt install -y nginx
-systemctl enable nginx
-systemctl start nginx
-EOF
+              #!/bin/bash
+              apt update -y
+              apt install -y nginx
+              systemctl enable nginx
+              systemctl start nginx
+              EOF
+
+  tags = {
+    Name = "agricam-server"
+  }
 }
 
 # =========================
-# S3 BUCKETS
+# S3 STORAGE
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
-  bucket = "agricam-${var.environnement}-storage-2026-us-east-1"
+
+  bucket = "agricam-${var.environnement}-storage-${random_id.suffix.hex}"
 }
 
+# =========================
+# S3 CLOUDTRAIL LOGS
+# =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
-  bucket = "agricam-${var.environnement}-logs-2026-us-east-1"
+
+  bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"
 }
