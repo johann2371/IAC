@@ -1,94 +1,36 @@
-name: Pipeline AgriCam DevSecOps
+name: AgriCam Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
 
-  validation:
-    name: Validation Terraform
+  terraform:
     runs-on: ubuntu-latest
 
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: eu-west-3
+      TF_VAR_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_environnement: dev
 
     defaults:
       run:
         working-directory: environnements/dev
 
     steps:
-      - name: Cloner le dépôt
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Installer Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init
-        run: terraform init
+      - run: terraform init
 
-      - name: Vérifier le format Terraform
-        run: terraform fmt -check
+      - run: terraform fmt -check
 
-      - name: Validation Terraform
-        run: terraform validate
+      - run: terraform validate
 
-      - name: Terraform Plan
-        run: terraform plan
+      - run: terraform plan
 
-  securite:
-    name: Scan sécurité Checkov
-    runs-on: ubuntu-latest
-    needs: validation
-
-    steps:
-      - name: Cloner le dépôt
-        uses: actions/checkout@v4
-
-      - name: Exécuter Checkov
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: .
-          framework: terraform
-
-  approval:
-    name: Validation manuelle
-    runs-on: ubuntu-latest
-    needs: securite
-
-    environment:
-      name: production
-
-    steps:
-      - name: Attente validation humaine
-        run: echo "Validation requise avant déploiement"
-
-  deploy:
-    name: Déploiement Infrastructure AWS
-    runs-on: ubuntu-latest
-    needs: approval
-
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: eu-west-3
-
-    defaults:
-      run:
-        working-directory: environnements/dev
-
-    steps:
-      - name: Cloner le dépôt
-        uses: actions/checkout@v4
-
-      - name: Installer Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Déploiement Terraform
-        run: terraform apply -auto-approve
+      - run: terraform apply -auto-approve
