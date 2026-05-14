@@ -12,7 +12,7 @@ provider "aws" {
 }
 
 # =========================
-# AMI Ubuntu (stable)
+# AMI Ubuntu
 # =========================
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -26,32 +26,47 @@ data "aws_ami" "ubuntu" {
 }
 
 # =========================
-# VPC (IMPORTANT: éviter VpcLimitExceeded)
+# KMS
+# =========================
+resource "aws_kms_key" "agricam_kms" {
+  description             = "KMS AgriCam"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true
+}
+
+resource "aws_kms_alias" "agricam_kms_alias" {
+  name          = "alias/agricam-${var.environnement}"
+  target_key_id = aws_kms_key.agricam_kms.key_id
+}
+
+# =========================
+# VPC
 # =========================
 resource "aws_vpc" "agricam_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-
-  tags = {
-    Name = "agricam-${var.environnement}"
-  }
 }
 
+# =========================
+# SUBNET
+# =========================
 resource "aws_subnet" "agricam_subnet" {
   vpc_id                  = aws_vpc.agricam_vpc.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
-
-  tags = {
-    Name = "agricam-subnet-${var.environnement}"
-  }
 }
 
+# =========================
+# INTERNET GATEWAY
+# =========================
 resource "aws_internet_gateway" "agricam_igw" {
   vpc_id = aws_vpc.agricam_vpc.id
 }
 
+# =========================
+# ROUTE TABLE
+# =========================
 resource "aws_route_table" "agricam_rt" {
   vpc_id = aws_vpc.agricam_vpc.id
 
@@ -67,10 +82,9 @@ resource "aws_route_table_association" "agricam_rta" {
 }
 
 # =========================
-# SECURITY GROUP (corrigé propre)
+# SECURITY GROUP
 # =========================
 resource "aws_security_group" "agricam_sg" {
-  name   = "agricam-sg-${var.environnement}"
   vpc_id = aws_vpc.agricam_vpc.id
 
   ingress {
@@ -96,7 +110,7 @@ resource "aws_security_group" "agricam_sg" {
 }
 
 # =========================
-# KEYPAIR
+# KEY PAIR
 # =========================
 resource "aws_key_pair" "agricam_keypair" {
   key_name   = "agricam-${var.environnement}"
@@ -104,7 +118,7 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# EC2 (FREE TIER SAFE)
+# EC2 INSTANCE
 # =========================
 resource "aws_instance" "agricam_serveur" {
   ami                    = data.aws_ami.ubuntu.id
@@ -120,19 +134,15 @@ apt install -y nginx
 systemctl enable nginx
 systemctl start nginx
 EOF
-
-  tags = {
-    Name = "agricam-${var.environnement}"
-  }
 }
 
 # =========================
-# S3 (simple)
+# S3 BUCKETS
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
-  bucket = "agricam-${var.environnement}-storage-2026"
+  bucket = "agricam-${var.environnement}-storage-2026-us-east-1"
 }
 
 resource "aws_s3_bucket" "logs_cloudtrail" {
-  bucket = "agricam-${var.environnement}-logs-2026"
+  bucket = "agricam-${var.environnement}-logs-2026-us-east-1"
 }

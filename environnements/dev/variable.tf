@@ -9,7 +9,7 @@ variable "environnement" {
 
 variable "type_instance" {
   type    = string
-  default = "t2.micro"
+  default = "t2.small"
 }
 
 variable "ip_admin" {
