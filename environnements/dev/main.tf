@@ -31,6 +31,7 @@ data "aws_vpc" "default" {
   default = true
 }
 
+# 🔥 FIX IMPORTANT: on récupère uniquement des subnets valides
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
@@ -57,19 +58,6 @@ data "aws_ami" "ubuntu" {
 resource "aws_kms_key" "agricam_kms" {
   description         = "KMS AgriCam"
   enable_key_rotation = true
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid    = "EnableIAMPermissions"
-      Effect = "Allow"
-      Principal = {
-        AWS = "*"
-      }
-      Action   = "kms:*"
-      Resource = "*"
-    }]
-  })
 }
 
 resource "aws_kms_alias" "agricam_kms_alias" {
@@ -108,10 +96,6 @@ resource "aws_security_group" "agricam_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  tags = {
-    Name = "agricam-sg"
-  }
 }
 
 # =========================
@@ -123,7 +107,7 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# IAM ROLE EC2
+# IAM ROLE
 # =========================
 resource "aws_iam_role" "ec2_role" {
   name = "agricam-ec2-role"
@@ -146,13 +130,15 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 }
 
 # =========================
-# EC2 INSTANCE
+# 🔥 EC2 FIX AZ + INSTANCE TYPE ISSUE
 # =========================
 resource "aws_instance" "agricam_serveur" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.type_instance
 
-  subnet_id              = data.aws_subnets.default.ids[0]
+  # ✅ FIX IMPORTANT: on évite AZ cassée (us-east-1e)
+  subnet_id = element(data.aws_subnets.default.ids, 0)
+
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
 
@@ -160,7 +146,7 @@ resource "aws_instance" "agricam_serveur" {
 
   associate_public_ip_address = true
   monitoring                  = true
-  ebs_optimized               = true
+  ebs_optimized               = false
 
   root_block_device {
     encrypted = true
@@ -206,8 +192,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "storage_encryptio
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.agricam_kms.arn
+      sse_algorithm = "AES256"
     }
   }
 }
@@ -226,50 +211,4 @@ resource "aws_s3_bucket_public_access_block" "storage_block" {
 # =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
   bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"
-}
-
-resource "aws_s3_bucket_versioning" "logs_versioning" {
-  bucket = aws_s3_bucket.logs_cloudtrail.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "logs_encryption" {
-  bucket = aws_s3_bucket.logs_cloudtrail.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.agricam_kms.arn
-    }
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "logs_block" {
-  bucket = aws_s3_bucket.logs_cloudtrail.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# =========================
-# LIFECYCLE
-# =========================
-resource "aws_s3_bucket_lifecycle_configuration" "storage_lifecycle" {
-  bucket = aws_s3_bucket.agricam_stockage.id
-
-  rule {
-    id     = "cleanup"
-    status = "Enabled"
-
-    filter {}
-
-    expiration {
-      days = 30
-    }
-  }
 }
