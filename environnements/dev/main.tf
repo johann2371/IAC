@@ -1,4 +1,6 @@
 terraform {
+  required_version = ">= 1.5.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -23,7 +25,7 @@ resource "random_id" "suffix" {
 }
 
 # =========================
-# DEFAULT VPC (FIX VPC LIMIT ERROR)
+# DEFAULT VPC
 # =========================
 data "aws_vpc" "default" {
   default = true
@@ -50,7 +52,7 @@ data "aws_ami" "ubuntu" {
 }
 
 # =========================
-# KMS (FIX: policy requirement Checkov)
+# KMS
 # =========================
 resource "aws_kms_key" "agricam_kms" {
   description         = "KMS AgriCam"
@@ -76,11 +78,11 @@ resource "aws_kms_alias" "agricam_kms_alias" {
 }
 
 # =========================
-# SECURITY GROUP (FIX CHECKOV)
+# SECURITY GROUP
 # =========================
 resource "aws_security_group" "agricam_sg" {
   name        = "agricam-sg-${random_id.suffix.hex}"
-  description = "Security group AgriCam"
+  description = "AgriCam Security Group"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
@@ -100,7 +102,7 @@ resource "aws_security_group" "agricam_sg" {
   }
 
   egress {
-    description = "HTTPS outbound only"
+    description = "All outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -113,7 +115,7 @@ resource "aws_security_group" "agricam_sg" {
 }
 
 # =========================
-# KEYPAIR (IMPORT RECOMMENDED)
+# KEYPAIR
 # =========================
 resource "aws_key_pair" "agricam_keypair" {
   key_name   = "agricam-${var.environnement}-${random_id.suffix.hex}"
@@ -121,7 +123,7 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# IAM ROLE (EC2)
+# IAM ROLE EC2
 # =========================
 resource "aws_iam_role" "ec2_role" {
   name = "agricam-ec2-role"
@@ -144,7 +146,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 }
 
 # =========================
-# EC2 INSTANCE (SECURE FIX)
+# EC2 INSTANCE
 # =========================
 resource "aws_instance" "agricam_serveur" {
   ami           = data.aws_ami.ubuntu.id
@@ -158,7 +160,7 @@ resource "aws_instance" "agricam_serveur" {
 
   associate_public_ip_address = true
   monitoring                  = true
-  ebs_optimized              = true
+  ebs_optimized               = true
 
   root_block_device {
     encrypted = true
@@ -178,12 +180,14 @@ resource "aws_instance" "agricam_serveur" {
               EOF
 
   tags = {
-    Name = "agricam-server"
+    Name    = "agricam-server"
+    Project = "AgriCam"
+    Env     = var.environnement
   }
 }
 
 # =========================
-# S3 BUCKET STORAGE
+# S3 STORAGE
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
   bucket = "agricam-${var.environnement}-storage-${random_id.suffix.hex}"
@@ -202,7 +206,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "storage_encryptio
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.agricam_kms.arn
     }
   }
 }
@@ -217,7 +222,7 @@ resource "aws_s3_bucket_public_access_block" "storage_block" {
 }
 
 # =========================
-# S3 LOGS BUCKET
+# S3 LOGS
 # =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
   bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"
@@ -236,7 +241,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "logs_encryption" 
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.agricam_kms.arn
     }
   }
 }
@@ -251,7 +257,7 @@ resource "aws_s3_bucket_public_access_block" "logs_block" {
 }
 
 # =========================
-# LIFECYCLE FIXED
+# LIFECYCLE
 # =========================
 resource "aws_s3_bucket_lifecycle_configuration" "storage_lifecycle" {
   bucket = aws_s3_bucket.agricam_stockage.id
@@ -260,9 +266,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "storage_lifecycle" {
     id     = "cleanup"
     status = "Enabled"
 
-    filter {
-      prefix = ""
-    }
+    filter {}
 
     expiration {
       days = 30
