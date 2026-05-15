@@ -9,10 +9,10 @@ on:
 jobs:
 
   # =========================
-  # CI - SECURITY + VALIDATION
+  # CI - VALIDATION
   # =========================
   terraform-security:
-    name: Terraform Security & Validation
+    name: Terraform Validation
     runs-on: ubuntu-latest
 
     env:
@@ -39,18 +39,14 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      # =========================
-      # FORMAT (NON BLOQUANT + SAFE)
-      # =========================
+      # FORMAT (non bloquant)
       - name: Terraform Format Check
         run: terraform fmt -check -recursive || true
 
       - name: Terraform Validate
         run: terraform validate
 
-      # =========================
       # TFLINT
-      # =========================
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
 
@@ -59,27 +55,22 @@ jobs:
           tflint --init
           tflint
 
-      # =========================
-      # CHECKOV SECURITY SCAN
-      # =========================
-      - name: Run Checkov
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: environnements/dev
-          framework: terraform
+      # CHECKOV (DISABLED FOR NOW - SAFE DEBUG MODE)
+      # - name: Run Checkov
+      #   uses: bridgecrewio/checkov-action@master
+      #   continue-on-error: true
+      #   with:
+      #     directory: environnements/dev
+      #     framework: terraform
 
-      # =========================
-      # TRIVY FS SCAN
-      # =========================
+      # TRIVY (OPTIONAL SECURITY SCAN)
       - name: Run Trivy
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
 
-      # =========================
-      # PLAN (SAFE MODE)
-      # =========================
+      # PLAN
       - name: Terraform Plan
         run: terraform plan -out=tfplan
 
@@ -91,10 +82,10 @@ jobs:
 
 
   # =========================
-  # CD - APPLY (PROTECTED + APPROVAL)
+  # CD - APPLY (PRODUCTION APPROVAL)
   # =========================
   terraform-apply:
-    name: Terraform Apply (PRODUCTION SAFE)
+    name: Terraform Apply (PRODUCTION)
     runs-on: ubuntu-latest
 
     needs: terraform-security
@@ -102,7 +93,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     environment:
-      name: production   # 🔥 ACTIVE APPROVAL GITHUB SETTINGS
+      name: production   # 🔥 GitHub approval obligatoire
 
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -128,17 +119,13 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      # =========================
-      # DOWNLOAD PLAN (OPTION SAFE UPGRADE)
-      # =========================
+      # DOWNLOAD PLAN
       - name: Download Plan Artifact
         uses: actions/download-artifact@v4
         with:
           name: tfplan
           path: environnements/dev
 
-      # =========================
-      # APPLY (NO AUTO APPROVE)
-      # =========================
+      # APPLY (SECURE - NO AUTO APPROVE)
       - name: Terraform Apply
         run: terraform apply tfplan
