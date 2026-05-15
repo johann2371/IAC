@@ -26,7 +26,7 @@ resource "random_id" "suffix" {
 }
 
 # =========================
-# AMI UBUNTU
+# AMI
 # =========================
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -40,10 +40,8 @@ data "aws_ami" "ubuntu" {
 }
 
 # =========================
-# KMS (AVEC POLICY OBLIGATOIRE)
+# KMS (FIX POLICY)
 # =========================
-data "aws_caller_identity" "current" {}
-
 resource "aws_kms_key" "agricam_kms" {
   description             = "KMS AgriCam"
   deletion_window_in_days = 10
@@ -51,17 +49,15 @@ resource "aws_kms_key" "agricam_kms" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "Enable IAM User Permissions"
-        Effect = "Allow"
-        Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
-        }
-        Action   = "kms:*"
-        Resource = "*"
+    Statement = [{
+      Sid    = "Enable IAM User Permissions"
+      Effect = "Allow"
+      Principal = {
+        AWS = "*"
       }
-    ]
+      Action   = "kms:*"
+      Resource = "*"
+    }]
   })
 }
 
@@ -71,7 +67,7 @@ resource "aws_kms_alias" "agricam_kms_alias" {
 }
 
 # =========================
-# VPC + FLOW LOGS (FIX PRISMA)
+# VPC + FLOW LOGS
 # =========================
 resource "aws_vpc" "agricam_vpc" {
   cidr_block           = "10.0.0.0/16"
@@ -83,71 +79,58 @@ resource "aws_vpc" "agricam_vpc" {
   }
 }
 
-resource "aws_flow_log" "vpc_flow_log" {
+resource "aws_flow_log" "vpc_flow" {
   vpc_id               = aws_vpc.agricam_vpc.id
   traffic_type         = "ALL"
   log_destination_type = "cloud-watch-logs"
-  log_group_name       = "/aws/vpc/agricam"
-  iam_role_arn         = aws_iam_role.flowlog_role.arn
+  log_destination      = aws_cloudwatch_log_group.flow_logs.arn
 }
 
-resource "aws_iam_role" "flowlog_role" {
-  name = "agricam-flowlog-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "vpc-flow-logs.amazonaws.com"
-      }
-    }]
-  })
+resource "aws_cloudwatch_log_group" "flow_logs" {
+  name              = "/agricam/vpc-flowlogs"
+  retention_in_days = 7
 }
 
 # =========================
-# SUBNET (FIX PRISMA: NO AUTO PUBLIC IP DEFAULT)
+# SUBNET (FIX SECURITY POLICY)
 # =========================
 resource "aws_subnet" "agricam_subnet" {
-  vpc_id     = aws_vpc.agricam_vpc.id
-  cidr_block = "10.0.1.0/24"
-
+  vpc_id                  = aws_vpc.agricam_vpc.id
+  cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = false
-
-  tags = {
-    Name = "agricam-subnet"
-  }
 }
 
 # =========================
-# IGW + ROUTE
+# INTERNET GATEWAY
 # =========================
-resource "aws_internet_gateway" "agricam_igw" {
+resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.agricam_vpc.id
 }
 
-resource "aws_route_table" "agricam_rt" {
+# =========================
+# ROUTE TABLE
+# =========================
+resource "aws_route_table" "rt" {
   vpc_id = aws_vpc.agricam_vpc.id
 
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.agricam_igw.id
+    gateway_id = aws_internet_gateway.igw.id
   }
 }
 
-resource "aws_route_table_association" "agricam_rta" {
+resource "aws_route_table_association" "rta" {
   subnet_id      = aws_subnet.agricam_subnet.id
-  route_table_id = aws_route_table.agricam_rt.id
+  route_table_id = aws_route_table.rt.id
 }
 
 # =========================
-# SECURITY GROUP (FIX PRISMA RULES)
+# SECURITY GROUP (FIX CHECKOV)
 # =========================
 resource "aws_security_group" "agricam_sg" {
   name        = "agricam-sg-${random_id.suffix.hex}"
   vpc_id      = aws_vpc.agricam_vpc.id
-  description = "Security group for AgriCam EC2"
+  description = "AgriCam SG"
 
   ingress {
     description = "SSH"
@@ -166,16 +149,39 @@ resource "aws_security_group" "agricam_sg" {
   }
 
   egress {
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "Outbound HTTPS only"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
 # =========================
-# KEY PAIR
+# IAM ROLE (IMPORTANT FIX)
+# =========================
+resource "aws_iam_role" "ec2_role" {
+  name = "agricam-ec2-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "agricam-profile"
+  role = aws_iam_role.ec2_role.name
+}
+
+# =========================
+# KEYPAIR
 # =========================
 resource "aws_key_pair" "agricam_keypair" {
   key_name   = "agricam-${var.environnement}-${random_id.suffix.hex}"
@@ -183,7 +189,7 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# EC2 (SECURE + FIX PRISMA)
+# EC2 (FIX CHECKOV)
 # =========================
 resource "aws_instance" "agricam_serveur" {
   ami           = data.aws_ami.ubuntu.id
@@ -192,6 +198,8 @@ resource "aws_instance" "agricam_serveur" {
   subnet_id              = aws_subnet.agricam_subnet.id
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
+
+  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
 
   associate_public_ip_address = false
   monitoring                  = true
@@ -206,23 +214,37 @@ resource "aws_instance" "agricam_serveur" {
   }
 
   user_data = <<-EOF
-              #!/bin/bash
-              apt update -y
-              apt install -y nginx
-              systemctl enable nginx
-              systemctl start nginx
-              EOF
-
-  tags = {
-    Name = "agricam-server"
-  }
+    #!/bin/bash
+    apt update -y
+    apt install -y nginx
+    systemctl enable nginx
+    systemctl start nginx
+  EOF
 }
 
 # =========================
-# S3 STORAGE (FULL SECURITY FIX)
+# S3 BUCKETS (FULL FIX)
 # =========================
 resource "aws_s3_bucket" "agricam_stockage" {
   bucket = "agricam-${var.environnement}-storage-${random_id.suffix.hex}"
+}
+
+resource "aws_s3_bucket_versioning" "storage_versioning" {
+  bucket = aws_s3_bucket.agricam_stockage.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "storage_enc" {
+  bucket = aws_s3_bucket.agricam_stockage.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+      kms_master_key_id = aws_kms_key.agricam_kms.arn
+    }
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "storage_block" {
@@ -234,42 +256,20 @@ resource "aws_s3_bucket_public_access_block" "storage_block" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_versioning" "storage_versioning" {
-  bucket = aws_s3_bucket.agricam_stockage.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "storage_sse" {
+resource "aws_s3_bucket_lifecycle_configuration" "storage_lifecycle" {
   bucket = aws_s3_bucket.agricam_stockage.id
 
   rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+    id     = "cleanup"
+    status = "Enabled"
+
+    expiration {
+      days = 30
     }
   }
 }
 
-resource "aws_s3_bucket_logging" "storage_logging" {
-  bucket        = aws_s3_bucket.agricam_stockage.id
-  target_bucket = aws_s3_bucket.logs_cloudtrail.id
-  target_prefix = "log/"
-}
-
-# =========================
 # LOG BUCKET
-# =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
   bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"
-}
-
-resource "aws_s3_bucket_public_access_block" "logs_block" {
-  bucket = aws_s3_bucket.logs_cloudtrail.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
 }
