@@ -7,7 +7,11 @@ output "nom_bucket_s3" {
 }
 
 output "vpc_id" {
-  value = aws_vpc.agricam_vpc.id
+  value = data.aws_vpc.default.id
+}
+
+output "subnet_id" {
+  value = data.aws_subnets.default.ids[0]
 }
 
 output "url" {
