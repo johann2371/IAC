@@ -25,18 +25,21 @@ resource "random_id" "suffix" {
 }
 
 # =========================
-# DEFAULT VPC
+# DEFAULT VPC + SAFE SUBNET
 # =========================
 data "aws_vpc" "default" {
   default = true
 }
 
-# 🔥 FIX IMPORTANT: on récupère uniquement des subnets valides
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+}
+
+data "aws_subnet" "selected" {
+  id = element(data.aws_subnets.default.ids, 0)
 }
 
 # =========================
@@ -58,6 +61,19 @@ data "aws_ami" "ubuntu" {
 resource "aws_kms_key" "agricam_kms" {
   description         = "KMS AgriCam"
   enable_key_rotation = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "EnableIAMPermissions"
+      Effect = "Allow"
+      Principal = {
+        AWS = "*"
+      }
+      Action   = "kms:*"
+      Resource = "*"
+    }]
+  })
 }
 
 resource "aws_kms_alias" "agricam_kms_alias" {
@@ -107,10 +123,10 @@ resource "aws_key_pair" "agricam_keypair" {
 }
 
 # =========================
-# IAM ROLE
+# IAM ROLE (SAFE + UNIQUE NAME)
 # =========================
 resource "aws_iam_role" "ec2_role" {
-  name = "agricam-ec2-role"
+  name = "agricam-ec2-role-${var.environnement}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -125,19 +141,18 @@ resource "aws_iam_role" "ec2_role" {
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "agricam-ec2-profile"
+  name = "agricam-ec2-profile-${var.environnement}"
   role = aws_iam_role.ec2_role.name
 }
 
 # =========================
-# 🔥 EC2 FIX AZ + INSTANCE TYPE ISSUE
+# EC2 INSTANCE (FIXED AZ ISSUE)
 # =========================
 resource "aws_instance" "agricam_serveur" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.type_instance
 
-  # ✅ FIX IMPORTANT: on évite AZ cassée (us-east-1e)
-  subnet_id = element(data.aws_subnets.default.ids, 0)
+  subnet_id = data.aws_subnet.selected.id
 
   vpc_security_group_ids = [aws_security_group.agricam_sg.id]
   key_name               = aws_key_pair.agricam_keypair.key_name
@@ -207,7 +222,7 @@ resource "aws_s3_bucket_public_access_block" "storage_block" {
 }
 
 # =========================
-# S3 LOGS
+# LOG BUCKET
 # =========================
 resource "aws_s3_bucket" "logs_cloudtrail" {
   bucket = "agricam-${var.environnement}-logs-${random_id.suffix.hex}"

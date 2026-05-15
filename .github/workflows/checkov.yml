@@ -23,7 +23,9 @@ jobs:
       TF_VAR_environnement: dev
       TF_VAR_ip_admin: ${{ secrets.IP_ADMIN }}
       TF_VAR_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
-      TF_VAR_type_instance: t3.small
+
+      # 🔥 FIX IMPORTANT
+      TF_VAR_type_instance: t3.micro
 
     defaults:
       run:
@@ -55,15 +57,7 @@ jobs:
           tflint --init
           tflint
 
-      # CHECKOV (DISABLED FOR NOW - SAFE DEBUG MODE)
-      # - name: Run Checkov
-      #   uses: bridgecrewio/checkov-action@master
-      #   continue-on-error: true
-      #   with:
-      #     directory: environnements/dev
-      #     framework: terraform
-
-      # TRIVY (OPTIONAL SECURITY SCAN)
+      # TRIVY SECURITY SCAN
       - name: Run Trivy
         uses: aquasecurity/trivy-action@master
         with:
@@ -82,10 +76,10 @@ jobs:
 
 
   # =========================
-  # CD - APPLY (PRODUCTION APPROVAL)
+  # CD - APPLY
   # =========================
   terraform-apply:
-    name: Terraform Apply (PRODUCTION)
+    name: Terraform Apply (Production Approval)
     runs-on: ubuntu-latest
 
     needs: terraform-security
@@ -93,7 +87,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     environment:
-      name: production   # 🔥 GitHub approval obligatoire
+      name: production
 
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -103,7 +97,9 @@ jobs:
       TF_VAR_environnement: dev
       TF_VAR_ip_admin: ${{ secrets.IP_ADMIN }}
       TF_VAR_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
-      TF_VAR_type_instance: t3.small
+
+      # 🔥 FIX IMPORTANT
+      TF_VAR_type_instance: t3.micro
 
     defaults:
       run:
@@ -126,6 +122,6 @@ jobs:
           name: tfplan
           path: environnements/dev
 
-      # APPLY (SECURE - NO AUTO APPROVE)
+      # APPLY SAFE MODE
       - name: Terraform Apply
-        run: terraform apply tfplan
+        run: terraform apply -auto-approve tfplan

@@ -7,9 +7,10 @@ variable "environnement" {
   type = string
 }
 
+# 🔥 FIX IMPORTANT: instance safe par défaut
 variable "type_instance" {
   type    = string
-  default = "t2.small"
+  default = "t3.micro"
 }
 
 variable "ip_admin" {

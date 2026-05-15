@@ -6,14 +6,6 @@ output "nom_bucket_s3" {
   value = aws_s3_bucket.agricam_stockage.bucket
 }
 
-output "vpc_id" {
-  value = data.aws_vpc.default.id
-}
-
-output "subnet_id" {
-  value = data.aws_subnets.default.ids[0]
-}
-
 output "url" {
   value = "http://${aws_instance.agricam_serveur.public_ip}"
 }
