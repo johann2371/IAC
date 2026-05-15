@@ -145,8 +145,8 @@ resource "aws_route_table_association" "agricam_rta" {
 # SECURITY GROUP (FIX PRISMA RULES)
 # =========================
 resource "aws_security_group" "agricam_sg" {
-  name   = "agricam-sg-${random_id.suffix.hex}"
-  vpc_id = aws_vpc.agricam_vpc.id
+  name        = "agricam-sg-${random_id.suffix.hex}"
+  vpc_id      = aws_vpc.agricam_vpc.id
   description = "Security group for AgriCam EC2"
 
   ingress {
@@ -189,9 +189,9 @@ resource "aws_instance" "agricam_serveur" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.type_instance
 
-  subnet_id                   = aws_subnet.agricam_subnet.id
-  vpc_security_group_ids     = [aws_security_group.agricam_sg.id]
-  key_name                   = aws_key_pair.agricam_keypair.key_name
+  subnet_id              = aws_subnet.agricam_subnet.id
+  vpc_security_group_ids = [aws_security_group.agricam_sg.id]
+  key_name               = aws_key_pair.agricam_keypair.key_name
 
   associate_public_ip_address = false
   monitoring                  = true
